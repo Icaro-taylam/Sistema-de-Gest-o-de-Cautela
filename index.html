@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGC - EB TÁTICO FINAL</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <style>
+        :root {
+            --verde-eb: #2b3a1a; --verde-claro: #4a632d;
+            --preto-tatico: #0d0d0d; --cinza-card: #1a1a1a;
+            --texto: #e0e0e0; --alerta: #c0392b; --sucesso: #27ae60; --aviso: #f1c40f;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--preto-tatico); color: var(--texto); padding-bottom: 50px; }
+        
+        header { background: var(--verde-eb); padding: 1rem; text-align: center; border-bottom: 3px solid var(--verde-claro); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .container { padding: 15px; max-width: 1100px; margin: auto; }
+
+        .painel { background: var(--cinza-card); padding: 20px; border-radius: 8px; border: 1px solid #333; margin-bottom: 20px; }
+        h3 { margin-bottom: 15px; color: var(--verde-claro); text-transform: uppercase; font-size: 0.9rem; border-bottom: 1px solid #333; padding-bottom: 5px; }
+
+        .form-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 15px; }
+        input { padding: 12px; background: #000; border: 1px solid #333; color: #fff; border-radius: 4px; }
+        
+        button { padding: 12px; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; color: white; transition: 0.3s; }
+        .btn-principal { background: var(--verde-eb); }
+        .btn-pdf { background: #d35400; }
+        .btn-scanner { background: #444; }
+        .btn-limpar { background: var(--alerta); width: 100%; margin-top: 8px; font-size: 0.8rem; }
+
+        #canvas-assinatura { background: #fff; border-radius: 4px; width: 100%; height: 120px; cursor: crosshair; margin-top: 5px; border: 2px solid var(--cinza-card); }
+
+        .grid-armas { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+        .card { background: var(--cinza-card); padding: 20px; border-left: 6px solid var(--sucesso); border-radius: 4px; border: 1px solid #333; position: relative; transition: 0.3s; }
+        .card.acautelado { border-left-color: var(--alerta); }
+        
+        @keyframes piscar { 0% { background: var(--cinza-card); } 50% { background: #421111; } 100% { background: var(--cinza-card); } }
+        .atrasado { animation: piscar 1.5s infinite; border: 1px solid var(--alerta) !important; }
+
+        .timer { font-size: 0.75rem; color: var(--aviso); margin-top: 5px; font-family: monospace; font-weight: bold; }
+        .municao-tag { background: #333; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; color: #fff; }
+
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+
+        @media (min-width: 768px) { .form-grid { grid-template-columns: 1fr 1fr 100px auto; } }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>SGC - EB TÁTICO</h1>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <div style="text-align: right;">
+            <label style="font-size: 0.6rem; display: block; color: var(--aviso);">TOQUE DE RECOLHER:</label>
+            <input type="time" id="horaLimite" value="18:00" style="padding: 5px; width: 100px;" onchange="salvarConfig()">
+        </div>
+        <button class="btn-pdf" onclick="gerarRelatorio()">GERAR PDF</button>
+    </div>
+</header>
+
+<div class="container">
+    
+    <section class="painel">
+        <h3>1. Cadastro de Armamento</h3>
+        <div class="form-grid">
+            <input type="text" id="addModelo" placeholder="Ex: Fuzil IA2">
+            <input type="text" id="addSerie" placeholder="Nº Série (SN)">
+            <button class="btn-principal" onclick="cadastrarArma()" style="grid-column: span 2;">CADASTRAR NO ARSENAL</button>
+        </div>
+    </section>
+
+    <section class="painel">
+        <h3>2. Registro de Cautela (Saída)</h3>
+        <div id="reader"></div>
+        <div class="form-grid">
+            <input type="text" id="inputSerie" placeholder="Nº Série">
+            <input type="text" id="inputMilitar" placeholder="Grad/Nome Guerra">
+            <input type="number" id="inputMun" placeholder="Mun" value="0">
+            <button class="btn-scanner" onclick="iniciarScanner()">CÂMERA</button>
+        </div>
+        
+        <p style="font-size: 0.7rem; color: #888; margin-top: 10px;">ASSINATURA DO MILITAR:</p>
+        <canvas id="canvas-assinatura"></canvas>
+        <button type="button" class="btn-limpar" onclick="limparAssinatura()">🗑️ LIMPAR ASSINATURA (ERROU O NOME)</button>
+
+        <button class="btn-principal" style="width: 100%; margin-top: 15px; padding: 15px; font-size: 1.1rem;" onclick="registrarSaida()">CONCLUIR CAUTELA</button>
+    </section>
+
+    <section>
+        <h3>3. Painel de Controle e Status</h3>
+        <div class="grid-armas" id="gridArmas"></div>
+    </section>
+</div>
+
+<script>
+    const { jsPDF } = window.jspdf;
+    let inventario = JSON.parse(localStorage.getItem('sgc_eb_vfinal')) || [];
+    
+    function salvarConfig() {
+        localStorage.setItem('sgc_hora_limite', document.getElementById('horaLimite').value);
+        renderizar();
+    }
+    document.getElementById('horaLimite').value = localStorage.getItem('sgc_hora_limite') || "18:00";
+
+    function salvar() {
+        localStorage.setItem('sgc_eb_vfinal', JSON.stringify(inventario));
+        renderizar();
+    }
+
+    function cadastrarArma() {
+        const modelo = document.getElementById('addModelo').value;
+        const serie = document.getElementById('addSerie').value.trim().toUpperCase();
+        if(modelo && serie) {
+            if(inventario.find(a => a.serie === serie)) return alert("Já existe esta série!");
+            inventario.push({ modelo, serie, status: 'disponivel', militar: '', municao: 0, dataHora: null });
+            document.getElementById('addModelo').value = '';
+            document.getElementById('addSerie').value = '';
+            salvar();
+        }
+    }
+
+    function registrarSaida() {
+        const serie = document.getElementById('inputSerie').value.trim().toUpperCase();
+        const militar = document.getElementById('inputMilitar').value.trim().toUpperCase();
+        const mun = document.getElementById('inputMun').value;
+        const arma = inventario.find(a => a.serie === serie);
+
+        if(arma && militar) {
+            if(arma.status === 'acautelado') return alert("Arma já está fora!");
+            arma.status = 'acautelado';
+            arma.militar = militar;
+            arma.municao = mun;
+            arma.dataHora = new Date().getTime();
+            document.getElementById('inputSerie').value = '';
+            document.getElementById('inputMilitar').value = '';
+            limparAssinatura();
+            salvar();
+        } else { alert("Informe SN e Militar!"); }
+    }
+
+    function devolver(serie) {
+        if(confirm(`Confirmar recebimento da arma ${serie}?`)) {
+            const arma = inventario.find(a => a.serie === serie);
+            arma.status = 'disponivel'; arma.militar = ''; arma.dataHora = null;
+            salvar();
+        }
+    }
+
+    function verificarAtraso(ms) {
+        if(!ms) return false;
+        const agora = new Date();
+        const [hL, mL] = document.getElementById('horaLimite').value.split(':');
+        const limite = new Date();
+        limite.setHours(hL, mL, 0);
+        return agora > limite;
+    }
+
+    function renderizar() {
+        const grid = document.getElementById('gridArmas');
+        let somAlerta = false;
+
+        grid.innerHTML = inventario.map(arma => {
+            const atrasado = verificarAtraso(arma.dataHora);
+            if(atrasado) somAlerta = true;
+
+            return `
+                <div class="card ${arma.status === 'acautelado' ? 'acautelado' : ''} ${atrasado ? 'atrasado' : ''}">
+                    <h4 style="color:white">${arma.modelo}</h4>
+                    <p style="font-size:0.8rem">SN: ${arma.serie}</p>
+                    ${arma.status === 'acautelado' ? `
+                        <div style="margin-top:10px">
+                            <p>Militar: <strong>${arma.militar}</strong></p>
+                            <p><span class="municao-tag">Munição: ${arma.municao} un</span></p>
+                            <p class="timer">${atrasado ? '⚠️ NÃO ENTREGUE NO HORÁRIO' : '✅ Dentro do prazo'}</p>
+                            <button onclick="devolver('${arma.serie}')" style="width:100%; margin-top:10px; background:#444">BAIXAR CAUTELA</button>
+                        </div>
+                    ` : '<p style="margin-top:10px; color:var(--sucesso)">🟢 NA RESERVA</p>'}
+                </div>
+            `;
+        }).join('');
+
+        if(somAlerta) {
+            const beep = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+            beep.play().catch(() => {});
+        }
+    }
+
+    function gerarRelatorio() {
+        const doc = new jsPDF();
+        doc.setFont("helvetica", "bold");
+        doc.text("RELATÓRIO DE CAUTELA - EB", 10, 15);
+        doc.setFontSize(10);
+        doc.text(`Gerado em: ${new Date().toLocaleString()}`, 10, 22);
+        doc.text("------------------------------------------------------------------------------------", 10, 28);
+        
+        let y = 35;
+        inventario.forEach(a => {
+            if(a.status === 'acautelado') {
+                doc.text(`${a.modelo} (SN: ${a.serie}) | Mil: ${a.militar} | Mun: ${a.municao} un`, 10, y);
+                y += 10;
+            }
+        });
+        doc.save("cautela_eb_report.pdf");
+    }
+
+    function iniciarScanner() {
+        const scanner = new Html5Qrcode("reader");
+        scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (txt) => {
+            document.getElementById('inputSerie').value = txt;
+            scanner.stop();
+        }).catch(() => alert("Erro ao acessar câmera."));
+    }
+
+    // LÓGICA DE ASSINATURA (MOUSE E TOUCH)
+    const canvas = document.getElementById('canvas-assinatura');
+    const ctx = canvas.getContext('2d');
+    let desenhando = false;
+
+    function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return { x: clientX - rect.left, y: clientY - rect.top };
+    }
+
+    const startDraw = (e) => { desenhando = true; ctx.beginPath(); const p = getMousePos(e); ctx.moveTo(p.x, p.y); };
+    const drawing = (e) => {
+        if(!desenhando) return;
+        e.preventDefault();
+        const p = getMousePos(e);
+        ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
+        ctx.lineTo(p.x, p.y); ctx.stroke();
+    };
+    const stopDraw = () => desenhando = false;
+
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('touchstart', startDraw);
+    window.addEventListener('mousemove', drawing);
+    canvas.addEventListener('touchmove', drawing);
+    window.addEventListener('mouseup', stopDraw);
+    window.addEventListener('touchend', stopDraw);
+
+    function limparAssinatura() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+    }
+
+    // Interface
+    setInterval(renderizar, 60000); 
+    renderizar();
+</script>
+</body>
+</html>
